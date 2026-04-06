@@ -1,20 +1,14 @@
 {
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "framework": "vite",
   "functions": {
     "api/scan.ts": {
+      "runtime": "nodejs20.x",
       "maxDuration": 30
     }
   },
   "rewrites": [
-    {
-      "source": "/api/scan",
-      "destination": "/api/scan"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/scan", "destination": "/api/scan" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
