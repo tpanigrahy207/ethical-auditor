@@ -1,13 +1,4 @@
 {
   "buildCommand": "vite build",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/scan.ts": {
-      "maxDuration": 30
-    }
-  },
-  "rewrites": [
-    { "source": "/api/scan", "destination": "/api/scan" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "outputDirectory": "dist"
 }
