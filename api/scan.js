@@ -75,6 +75,8 @@ Other rules:
 - nist_gaps: array of {function, subcategory, description}
 - controls: array of {action, priority} where priority is Critical/High/Medium
 - executive_summary: max 3 sentences, plain text
+- MANDATORY: if ANY dimension scores below 14, eu_gaps MUST contain at least 3 items, nist_gaps MUST contain at least 3 items, and controls MUST contain at least 3 items — never return empty arrays for a system with compliance gaps
+- MANDATORY: a High or Unacceptable risk_tier system MUST have at least 5 eu_gaps items
 
 System to assess:
 Name: ${systemName}
@@ -137,9 +139,71 @@ Industry: ${industry}`;
                 return 'Minimal';
             return 'Limited';
         }
+        const riskTier = resolveRiskTier(parsed.risk_tier, calculatedTotal);
+        const dimScores = { transparency, accountability, dataGovernance, humanOversight, riskManagement };
+        const needsFallback = calculatedTotal < 50 || Object.values(dimScores).some(v => v < 8);
+        const isHighRisk = riskTier === 'High' || riskTier === 'Unacceptable';
+
+        // ── Fallback gap/control generation ───────────────────────────────────
+        // Triggered when the model returns empty arrays despite low scores,
+        // or when a High/Unacceptable system has fewer than 3 EU AI Act gaps.
+        const EU_FALLBACKS = {
+            transparency: { article: 'Article 13', description: 'No explanation mechanism documented for AI decisions affecting users.', severity: 'High' },
+            accountability: { article: 'Article 17', description: 'No quality management system or named responsible person identified.', severity: 'High' },
+            dataGovernance: { article: 'Article 10', description: 'Training and inference data not documented or bias-tested.', severity: 'High' },
+            humanOversight: { article: 'Article 14', description: 'No human oversight mechanism to review or override AI decisions.', severity: 'Critical' },
+            riskManagement: { article: 'Article 9', description: 'No risk management system or incident response process in place.', severity: 'High' },
+        };
+        const NIST_FALLBACKS = {
+            transparency: { function: 'Govern', subcategory: 'GV-1.1', description: 'AI transparency policies are not established or communicated.' },
+            accountability: { function: 'Govern', subcategory: 'GV-6.1', description: 'Roles and responsibilities for AI risk are not assigned.' },
+            dataGovernance: { function: 'Map', subcategory: 'MP-2.3', description: 'Data provenance and bias evaluation practices are absent.' },
+            humanOversight: { function: 'Manage', subcategory: 'MG-2.2', description: 'Human intervention procedures for AI output are not defined.' },
+            riskManagement: { function: 'Measure', subcategory: 'MS-2.5', description: 'Monitoring, drift detection, and incident response are not documented.' },
+        };
+        const CONTROL_FALLBACKS = {
+            transparency: { action: 'Implement explainability layer and user-facing decision rationale for all AI outputs', priority: 'High' },
+            accountability: { action: 'Assign a named AI system owner and establish an audit trail for all model decisions', priority: 'Critical' },
+            dataGovernance: { action: 'Document data sources, conduct bias testing, and implement data minimisation controls', priority: 'Critical' },
+            humanOversight: { action: 'Deploy a human-in-the-loop review stage before decisions take effect', priority: 'Critical' },
+            riskManagement: { action: 'Establish continuous monitoring, drift detection, and a documented incident response plan', priority: 'High' },
+        };
+
+        const failedDims = Object.entries({
+            transparency, accountability, dataGovernance: dataGovernance, humanOversight, riskManagement
+        })
+            .filter(([, v]) => v < 14)
+            .map(([k]) => k === 'dataGovernance' ? 'dataGovernance' : k);
+        // Map camelCase keys back to the fallback map keys
+        const dimKeyMap = { transparency: 'transparency', accountability: 'accountability', dataGovernance: 'dataGovernance', humanOversight: 'humanOversight', riskManagement: 'riskManagement' };
+
+        function padArray(arr, fallbackMap, minCount) {
+            const result = [...arr];
+            for (const key of Object.keys(fallbackMap)) {
+                if (result.length >= minCount) break;
+                const fb = fallbackMap[key];
+                const alreadyPresent = result.some(item =>
+                    JSON.stringify(item).toLowerCase().includes((fb.article || fb.function || '').toLowerCase())
+                );
+                if (!alreadyPresent) result.push(fb);
+            }
+            return result;
+        }
+
+        let euGaps = parsed.eu_gaps;
+        let nistGaps = parsed.nist_gaps;
+        let controls = parsed.controls;
+
+        const euMin = isHighRisk ? 3 : (needsFallback ? 3 : 0);
+        const otherMin = needsFallback ? 3 : 0;
+
+        if (euGaps.length < euMin) euGaps = padArray(euGaps, EU_FALLBACKS, euMin);
+        if (nistGaps.length < otherMin) nistGaps = padArray(nistGaps, NIST_FALLBACKS, otherMin);
+        if (controls.length < otherMin) controls = padArray(controls, CONTROL_FALLBACKS, otherMin);
+
         // rawResponse deliberately excluded — never send raw LLM output to client
         const result = {
-            riskTier: resolveRiskTier(parsed.risk_tier, calculatedTotal),
+            riskTier,
             riskRationale: parsed.risk_rationale,
             readinessScore: calculatedTotal,
             scores: {
@@ -149,9 +213,9 @@ Industry: ${industry}`;
                 humanOversight,
                 riskManagement
             },
-            euGaps: parsed.eu_gaps,
-            nistGaps: parsed.nist_gaps,
-            controls: parsed.controls,
+            euGaps,
+            nistGaps,
+            controls,
             executiveSummary: parsed.executive_summary,
         };
         res.json({ success: true, result });
